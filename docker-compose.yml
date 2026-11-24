@@ -1,0 +1,34 @@
+services:
+
+  app:
+    build: .
+    container_name: paylink-app
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/paylink
+      SPRING_DATASOURCE_USERNAME: paylink
+      SPRING_DATASOURCE_PASSWORD: paylink123
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17
+    container_name: paylink-db
+    environment:
+      POSTGRES_DB: paylink
+      POSTGRES_USER: paylink
+      POSTGRES_PASSWORD: paylink123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paylink -d paylink"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
