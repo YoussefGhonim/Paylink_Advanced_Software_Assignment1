@@ -1,0 +1,232 @@
+erDiagram
+    USERS ||--|| WALLETS : "owns"
+    WALLETS ||--o{ LEDGER_ENTRIES : "records movements"
+    WALLETS ||--o{ WALLET_HOLDS : "reserves funds"
+    PAYMENTS ||--o| WALLET_HOLDS : "has one hold"
+    PAYMENTS ||--o{ LEDGER_ENTRIES : "causes"
+    PAYMENTS ||--o{ PAYMENT_EVENTS : "state history"
+    USERS ||--o{ PAYMENTS : "customer pays"
+    USERS ||--o{ PAYMENTS : "agent assists"
+    BILLERS ||--o{ BILLER_SERVICES : "offers"
+    BILLER_SERVICES ||--o{ SERVICE_INPUT_FIELDS : "requires"
+    BILLER_SERVICES ||--o{ PAYMENTS : "paid via"
+    BILLER_SERVICES ||--o{ FEE_RULES : "priced by"
+    BILLERS ||--o{ PROMOTIONS : "may have"
+    PAYMENTS ||--o| AGENT_COMMISSIONS : "earns"
+    USERS ||--o{ AGENT_COMMISSIONS : "agent receives"
+    PAYMENTS ||--o{ NOTIFICATIONS : "triggers"
+    USERS ||--o{ NOTIFICATIONS : "receives"
+    PAYMENTS ||--o{ BILLER_CALLBACKS : "receives callbacks"
+    PAYMENTS ||--o{ REFUND_REQUESTS : "may be disputed"
+    USERS ||--o{ AUDIT_LOGS : "performs actions"
+    BILLERS ||--o{ SETTLEMENT_FILES : "sends daily"
+    SETTLEMENT_FILES ||--o{ RECONCILIATION_ITEMS : "contains"
+    PAYMENTS ||--o{ RECONCILIATION_ITEMS : "compared in"
+
+    USERS {
+        bigint id PK
+        string full_name
+        string phone UK
+        string national_id UK
+        string password_hash
+        string role "CUSTOMER, AGENT, ADMIN, SUPPORT"
+        string verification_level "BASIC or VERIFIED"
+        string status "ACTIVE or BLOCKED"
+        timestamp blocked_until "velocity rule 10 min block"
+        timestamp created_at
+    }
+
+    WALLETS {
+        bigint id PK
+        bigint user_id FK, UK
+        string currency "EGP"
+        timestamp created_at
+    }
+
+    LEDGER_ENTRIES {
+        bigint id PK
+        bigint wallet_id FK
+        bigint payment_id FK "nullable"
+        bigint hold_id FK "nullable"
+        string entry_type "TOPUP, HOLD, RELEASE, CAPTURE, FEE_INCOME, COMMISSION, REFUND, COMPENSATION"
+        string bucket "AVAILABLE or HELD"
+        decimal amount "DECIMAL(19,2) signed, immutable"
+        string reason "why"
+        bigint created_by FK "who"
+        timestamp created_at "when"
+    }
+
+    WALLET_HOLDS {
+        bigint id PK
+        bigint wallet_id FK
+        bigint payment_id FK, UK
+        decimal amount "DECIMAL(19,2)"
+        string status "ACTIVE, CAPTURED, RELEASED"
+        timestamp created_at
+        timestamp closed_at
+    }
+
+    BILLERS {
+        bigint id PK
+        string code UK "ELECTROCO, AQUACO, TOPUPNET"
+        string name
+        string category "ELECTRICITY, WATER, MOBILE, INTERNET"
+        string protocol "REST_JSON, SOAP_XML, ASYNC_CALLBACK, BATCH_CSV"
+        string status "ACTIVE or DISABLED"
+    }
+
+    BILLER_SERVICES {
+        bigint id PK
+        bigint biller_id FK
+        string name
+        decimal min_amount "DECIMAL(19,2)"
+        decimal max_amount "DECIMAL(19,2)"
+        string status "ACTIVE or DISABLED"
+    }
+
+    SERVICE_INPUT_FIELDS {
+        bigint id PK
+        bigint service_id FK
+        string field_name "meter_number, phone_number"
+        string label
+        boolean required
+        string validation_regex
+    }
+
+    PAYMENTS {
+        bigint id PK
+        string reference UK "unique payment reference"
+        string idempotency_key "unique per customer"
+        string request_hash "detects same key with different data"
+        bigint customer_id FK
+        bigint agent_id FK "nullable"
+        bigint wallet_id FK
+        bigint service_id FK
+        json input_data "meter number etc"
+        decimal bill_amount "DECIMAL(19,2)"
+        decimal fee_amount "DECIMAL(19,2) locked at initiation"
+        decimal total_amount "DECIMAL(19,2)"
+        string status "Initiated, FundsHeld, SentToBiller, Completed, Failed, Unknown, Rejected, Refunded"
+        string biller_reference
+        string failure_reason
+        int retry_count "0 to 3"
+        timestamp next_retry_at
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    PAYMENT_EVENTS {
+        bigint id PK
+        bigint payment_id FK
+        string from_state
+        string to_state
+        string event "e.g. Biller confirms"
+        string details
+        timestamp created_at
+    }
+
+    FEE_RULES {
+        bigint id PK
+        bigint service_id FK
+        string fee_type "FIXED, PERCENTAGE, TIERED"
+        decimal fixed_amount "DECIMAL(19,2)"
+        decimal percentage "e.g. 1.5"
+        decimal min_fee "DECIMAL(19,2)"
+        decimal tier_threshold "e.g. 200"
+        decimal fee_below_threshold
+        decimal fee_above_threshold
+        boolean active
+    }
+
+    PROMOTIONS {
+        bigint id PK
+        bigint biller_id FK
+        date start_date
+        date end_date
+        decimal fee_override "0 during promotion"
+        boolean active
+    }
+
+    SYSTEM_SETTINGS {
+        string setting_key PK "daily_limit_basic, velocity_max, timeout_seconds"
+        string setting_value
+        string description
+        bigint updated_by FK
+        timestamp updated_at
+    }
+
+    AGENT_COMMISSIONS {
+        bigint id PK
+        bigint payment_id FK, UK
+        bigint agent_id FK
+        decimal fee_amount "DECIMAL(19,2)"
+        decimal commission_amount "40 percent of fee"
+        bigint ledger_entry_id FK
+        timestamp created_at
+    }
+
+    NOTIFICATIONS {
+        bigint id PK
+        bigint payment_id FK
+        bigint user_id FK
+        string channel "SMS, PUSH, EMAIL"
+        string template_code
+        string message
+        string status "PENDING, SENT, UNDELIVERED"
+        int attempts "max 3 retries"
+        string last_error
+        timestamp created_at
+    }
+
+    BILLER_CALLBACKS {
+        bigint id PK
+        bigint payment_id FK
+        string biller_reference
+        string result "success or failed"
+        json raw_payload
+        boolean is_duplicate "ignored and logged"
+        timestamp received_at
+    }
+
+    REFUND_REQUESTS {
+        bigint id PK
+        bigint payment_id FK
+        bigint requested_by FK
+        bigint decided_by FK "nullable"
+        decimal refund_amount "bill amount only"
+        string status "PENDING, APPROVED, REJECTED"
+        string reason
+        timestamp decided_at
+        timestamp created_at
+    }
+
+    AUDIT_LOGS {
+        bigint id PK
+        bigint actor_id FK "who"
+        string action "why or what"
+        string entity_type
+        bigint entity_id
+        string reason
+        json old_value
+        json new_value
+        timestamp created_at "when"
+    }
+
+    SETTLEMENT_FILES {
+        bigint id PK
+        bigint biller_id FK
+        string file_name
+        date settlement_date
+        timestamp uploaded_at
+    }
+
+    RECONCILIATION_ITEMS {
+        bigint id PK
+        bigint settlement_file_id FK
+        bigint payment_id FK "nullable"
+        string biller_reference
+        decimal biller_amount "DECIMAL(19,2)"
+        string biller_status
+        string result "MATCHED, MISMATCH, MISSING_IN_PAYLINK, MISSING_IN_SETTLEMENT"
+        string notes
+    }
