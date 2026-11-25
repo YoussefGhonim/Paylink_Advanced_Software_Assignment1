@@ -1,0 +1,151 @@
+@startuml 04-sequence-pay-bill
+title PayLink - Sequence: Pay a Bill (Phase 1)
+skinparam shadowing false
+autonumber
+
+actor Customer
+participant "REST API +\nAuthentication" as API
+participant "Payment\nProcessing" as Pay
+participant "Biller\nCatalog" as Cat
+participant "Fees and\nCommissions" as Fee
+participant "Fraud\nChecks" as Fraud
+participant "Accounts and\nWallet" as Wallet
+participant "Biller Integration\n(adapter via factory)" as Adapter
+participant "Biller\n(mock)" as Biller
+participant "Notifications" as Notif
+participant "Audit" as Audit
+
+== 1. Inquiry and quote (US-08) ==
+Customer -> API : POST /bills/inquiry (service, meter number)
+API -> API : authenticate and authorize by role (SR-01)
+API -> Cat : isServiceActive(serviceId), getRequiredFields(serviceId)
+Cat --> API : active, required fields
+API -> Adapter : inquire(service, inputs)
+Adapter -> Biller : protocol-specific inquiry
+Biller --> Adapter : bill amount
+Adapter --> API : normalized bill amount
+API -> Fee : calculateFee(service, amount, date)
+Fee --> API : fee (2.50 / 1.5% min 1 / tiered / 0 in promotion)
+API --> Customer : amount + fee + total
+note right
+  TopUpNet: the customer enters the amount;
+  no bill inquiry is assumed (A-19).
+end note
+
+== 2. Create payment and idempotency check (US-10) ==
+Customer -> API : POST /payments (Idempotency-Key, details)
+API -> Pay : createPayment(request, idempotencyKey)
+Pay -> Pay : find payment by customer + idempotency key, compare request hash
+alt same key, same request
+  Pay --> API : original result, no new hold, no new biller call
+  API --> Customer : original response
+else same key, different request (A-05)
+  Pay --> API : conflict
+  API --> Customer : 409 Conflict
+else new key
+  Pay -> Pay : continue with the steps below
+end
+
+group New request only
+  Pay -> Cat : isServiceActive(serviceId)
+  Cat --> Pay : active (a disabled service is rejected, US-06)
+  Pay -> Fee : calculateFee(service, billAmount, date)
+  Fee --> Pay : fee
+  Pay -> Pay : create Payment [Initiated] with fee locked (A-16)
+  Pay -> Audit : record event (who, when, why)
+
+  group Fraud checks and funds hold (US-11, US-12, US-18, US-19)
+    Pay -> Fraud : check(paymentRequest)
+    note right of Fraud
+      Chain: blocked account, single-payment limit (5 to 10,000),
+      daily limit (bill amount of Completed and active held
+      payments, A-03 / A-04), velocity (more than 5 in 60 s).
+    end note
+    alt a rule fails
+      Fraud --> Pay : rejection reason
+      opt velocity rule broken
+        Fraud -> Wallet : blockAccount(userId, 10 minutes)
+      end
+      Pay -> Pay : Initiated -> Rejected
+      Pay -> Audit : record transition
+      Pay --> API : Rejected + clear reason
+      API --> Customer : rejected, no biller call
+    else all rules pass
+      Fraud --> Pay : pass
+      Pay -> Wallet : holdFunds(walletId, paymentId, total)
+      note right of Wallet
+        Atomic transaction with wallet lock (A-07).
+        Creates WalletHold [ACTIVE] and ledger entries
+        that move the total from AVAILABLE to HELD.
+      end note
+      alt insufficient funds (including a lost concurrent race)
+        Wallet --> Pay : insufficient funds
+        Pay -> Pay : Initiated -> Rejected
+        Pay -> Audit : record transition
+        Pay --> API : Rejected
+        API --> Customer : insufficient funds
+      else hold succeeds
+        Wallet --> Pay : hold created
+        Pay -> Pay : Initiated -> FundsHeld
+        Pay -> Audit : record hold
+
+        group Call the biller (US-09, US-13, US-14, US-15)
+          Pay -> Pay : FundsHeld -> SentToBiller
+          Pay -> Adapter : pay(request with unique reference)
+          Adapter -> Biller : protocol-specific request (10 s timeout)
+          alt biller confirms
+            Biller --> Adapter : paid
+            Adapter --> Pay : SUCCESS
+            Pay -> Wallet : captureHold(paymentId)
+            Pay -> Wallet : postFeeIncome(paymentId)
+            opt agent-assisted payment (US-17)
+              Pay -> Fee : recordCommission(paymentId)
+              Fee -> Wallet : postCommission(agentId, 40% of fee)
+              note right of Fee
+                Zero fee in a promotion means
+                zero commission (A-09).
+              end note
+            end
+            Pay -> Pay : SentToBiller -> Completed
+            Pay -> Audit : record capture, fee income, commission
+            Pay -> Notif : notify(userId, paymentId, PAYMENT_COMPLETED, SMS + PUSH)
+            Pay --> API : Completed
+            API --> Customer : payment completed
+          else biller refuses (for example AquaCo)
+            Biller --> Adapter : error code
+            Adapter --> Pay : REFUSED + reason
+            Pay -> Pay : SentToBiller -> Failed
+            Pay -> Notif : notify(userId, paymentId, PAYMENT_FAILED, SMS + PUSH)
+            note over Pay
+              Hold release and Refunded:
+              see 05-sequence-refund-failed-payment.
+            end note
+            Pay --> API : Failed + reason
+            API --> Customer : payment failed
+          else no answer within 10 s (for example ElectroCo at 12 s)
+            Adapter --> Pay : TIMEOUT
+            Pay -> Pay : SentToBiller -> Unknown
+            note over Pay
+              Funds stay HELD. Re-query at 1, 5, 15 min;
+              a late callback or reconciliation may resolve it.
+              Never refunded automatically (A-06).
+            end note
+            Pay --> API : Unknown (processing)
+            API --> Customer : being processed
+          else TopUpNet answers "accepted"
+            Biller --> Adapter : accepted (acknowledgment only)
+            Adapter --> Pay : PENDING
+            Pay --> API : pending
+            API --> Customer : pending
+            note over Pay
+              Stays SentToBiller until the callback arrives, or the
+              10 s timeout makes it Unknown (A-20). A duplicate
+              callback is ignored and logged (A-15).
+            end note
+          end
+        end
+      end
+    end
+  end
+end
+@enduml

@@ -1,0 +1,149 @@
+@startuml 01-use-case
+title PayLink - Use-Case Diagram (Phase 1)
+left to right direction
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+actor Customer
+actor Agent
+actor "Administrator" as Admin
+actor "Support Employee" as Support
+actor "Finance Staff" as Finance
+actor "Auditor" as Auditor
+actor "Scheduler\n(timer / retry job)" as Scheduler <<system>>
+actor "Biller\n(ElectroCo, AquaCo, TopUpNet)" as Biller <<external>>
+actor "Notification Provider\n(SMS / push / email)" as NotifProv <<external>>
+
+rectangle "PayLink Backend" {
+
+  package "Accounts and Wallet" {
+    usecase "Register (US-01)" as UC_REG
+    usecase "Log in / authenticate (SR-01)" as UC_LOGIN
+    usecase "Upgrade verification (US-02)" as UC_VERIFY
+    usecase "View wallet balance\nand history (US-03)" as UC_WALLET
+    usecase "Top up wallet:\nsimulated card (US-04)" as UC_TOPUP_CARD
+    usecase "Record agent cash top-up (US-04)" as UC_TOPUP_CASH
+    usecase "Provision agent account (SR-02)" as UC_AGENT_PROV
+    usecase "Block / unblock account (US-21)" as UC_BLOCK
+    usecase "Trace wallet movements\nin the ledger (US-05)" as UC_LEDGER
+  }
+
+  package "Biller Catalog" {
+    usecase "Manage billers and services (US-06)" as UC_MANAGE
+    usecase "Browse billers and\nrequired fields (US-07)" as UC_BROWSE
+  }
+
+  package "Payment Processing" {
+    usecase "Inquire bill and get quote (US-08)" as UC_INQUIRY
+    usecase "Pay a bill (US-09, US-10, US-11, US-12)" as UC_PAY
+    usecase "Pay on behalf of customer (US-17)" as UC_PAY_AGENT
+    usecase "Calculate fee (US-16)" as UC_FEE
+    usecase "Run fraud checks:\nblocked, limits, velocity (US-18, US-19)" as UC_FRAUD
+    usecase "Hold funds (US-12)" as UC_HOLD
+    usecase "Call biller through adapter (US-15)" as UC_CALL
+    usecase "Handle TopUpNet callback (US-14)" as UC_CALLBACK
+    usecase "Re-query Unknown payment (US-13)" as UC_RETRY
+    usecase "Release hold / refund failed payment (US-12)" as UC_RELEASE
+    usecase "Post agent commission (US-17)" as UC_COMM
+    usecase "Search payment by reference (US-20)" as UC_SEARCH
+    usecase "Request refund of Completed\npayment (US-27)" as UC_REFREQ
+    usecase "Review refund request (US-27)" as UC_REFREVIEW
+  }
+
+  package "Notifications" {
+    usecase "Send payment notification (US-22)" as UC_NOTIFY
+    usecase "Retry failed notification (US-23)" as UC_NOTIFY_RETRY
+  }
+
+  package "Administration, Audit and Finance" {
+    usecase "Edit fees and limits (US-24)" as UC_CONFIG
+    usecase "Write audit record (US-25)" as UC_AUDIT
+    usecase "View audit trail (US-25)" as UC_AUDIT_VIEW
+    usecase "Run daily reconciliation (US-26)" as UC_RECON
+    usecase "Review discrepancies (US-26)" as UC_DISCREP
+    usecase "View daily financial report (US-28)" as UC_REPORT
+  }
+}
+
+' --- Customer ---
+Customer --> UC_REG
+Customer --> UC_LOGIN
+Customer --> UC_VERIFY
+Customer --> UC_WALLET
+Customer --> UC_TOPUP_CARD
+Customer --> UC_BROWSE
+Customer --> UC_INQUIRY
+Customer --> UC_PAY
+Customer --> UC_REFREQ
+
+' --- Agent ---
+Agent --> UC_LOGIN
+Agent --> UC_TOPUP_CASH
+Agent --> UC_PAY_AGENT
+
+' --- Admin ---
+Admin --> UC_MANAGE
+Admin --> UC_CONFIG
+Admin --> UC_AGENT_PROV
+Admin --> UC_REPORT
+Admin --> UC_VERIFY
+
+' --- Support ---
+Support --> UC_SEARCH
+Support --> UC_BLOCK
+Support --> UC_REFREVIEW
+Support --> UC_DISCREP
+
+' --- Finance ---
+Finance --> UC_LEDGER
+Finance --> UC_RECON
+Finance --> UC_DISCREP
+Finance --> UC_REPORT
+
+' --- Auditor ---
+Auditor --> UC_AUDIT_VIEW
+Auditor --> UC_LEDGER
+
+' --- Scheduler ---
+Scheduler --> UC_RETRY
+Scheduler --> UC_RECON
+Scheduler --> UC_NOTIFY_RETRY
+
+' --- External systems ---
+UC_CALL --> Biller
+UC_CALLBACK <-- Biller
+UC_RETRY --> Biller
+UC_RECON <-- Biller : settlement file
+UC_NOTIFY --> NotifProv
+UC_NOTIFY_RETRY --> NotifProv
+
+' --- Include / extend ---
+UC_PAY ..> UC_FEE : <<include>>
+UC_PAY ..> UC_FRAUD : <<include>>
+UC_PAY ..> UC_HOLD : <<include>>
+UC_PAY ..> UC_CALL : <<include>>
+UC_PAY ..> UC_NOTIFY : <<include>>
+UC_PAY ..> UC_AUDIT : <<include>>
+UC_PAY_AGENT ..> UC_PAY : <<extend>>
+UC_COMM ..> UC_PAY_AGENT : <<extend>>
+UC_RELEASE ..> UC_PAY : <<extend>>
+UC_CALLBACK ..> UC_PAY : <<extend>>
+UC_RETRY ..> UC_PAY : <<extend>>
+UC_INQUIRY ..> UC_FEE : <<include>>
+UC_NOTIFY_RETRY ..> UC_NOTIFY : <<extend>>
+UC_REFREVIEW ..> UC_REFREQ : <<extend>>
+UC_CONFIG ..> UC_AUDIT : <<include>>
+UC_MANAGE ..> UC_AUDIT : <<include>>
+UC_BLOCK ..> UC_AUDIT : <<include>>
+UC_RECON ..> UC_DISCREP : <<extend>>
+
+note right of UC_RETRY
+  Unknown payments are never refunded
+  automatically (US-13, A-06).
+end note
+
+note bottom of UC_REFREQ
+  Completed-payment refund creates a separate
+  refund request; payment stays Completed (A-12).
+end note
+@enduml

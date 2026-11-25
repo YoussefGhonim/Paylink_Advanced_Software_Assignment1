@@ -1,0 +1,73 @@
+@startuml 05-sequence-refund-failed-payment
+title PayLink - Sequence: Refund a Failed Payment (Phase 1)
+skinparam shadowing false
+autonumber
+
+actor Customer
+participant "Biller Integration /\nRetry job /\nReconciliation" as Source
+participant "Payment\nProcessing" as Pay
+participant "State machine\n(payment domain)" as SM
+participant "Accounts and\nWallet" as Wallet
+participant "Notifications" as Notif
+participant "Audit" as Audit
+
+== A. The payment becomes Failed ==
+alt biller refuses (payment is SentToBiller)
+  Source -> Pay : handleBillerResult(paymentId, REFUSED + reason)
+  Pay -> SM : SentToBiller -> Failed
+else Unknown payment resolved as non-payment
+  Source -> Pay : handleBillerResult(paymentId, REFUSED)\nor reconciliation proves non-receipt
+  note right
+    Only a COMPLETE settlement file can establish
+    non-receipt (A-24). Exhausted retries alone
+    do NOT trigger a refund (A-06).
+  end note
+  Pay -> SM : Unknown -> Failed
+end
+SM --> Pay : transition accepted
+Pay -> Pay : save PaymentEvent (from, to, event, details)
+Pay -> Audit : record transition (who, when, why)
+Pay -> Notif : notify(userId, paymentId, PAYMENT_FAILED, SMS + PUSH)
+Notif --> Customer : failure notification with clear reason
+
+== B. Release the hold ==
+Pay -> SM : validate Failed -> Refunded
+SM --> Pay : allowed
+Pay -> Wallet : releaseHold(paymentId)
+note right of Wallet
+  One transaction with wallet lock (A-07):
+  WalletHold ACTIVE -> RELEASED, and RELEASE ledger
+  entries move the total from HELD back to AVAILABLE.
+  No fee income and no agent commission are posted
+  for a failed payment (A-23, US-17).
+end note
+Wallet --> Pay : hold released, available balance restored
+Pay -> SM : Failed -> Refunded
+Pay -> Pay : save PaymentEvent (Failed -> Refunded)
+Pay -> Audit : record release (who, when, why)
+Pay --> Customer : status Refunded (visible in wallet history)
+
+== C. Guard rails ==
+opt release requested again (duplicate event or retry)
+  Pay -> SM : any transition from Refunded
+  SM --> Pay : rejected, Refunded is final
+  note right
+    The hold is already RELEASED, so no second
+    release and no second ledger entry.
+  end note
+end
+
+opt notification provider is down
+  Notif -> Notif : retry up to 3 times, then mark UNDELIVERED
+  note right
+    The refund still stands; the notification
+    failure is tracked separately (US-23).
+  end note
+end
+
+note over Pay, Wallet
+  Out of scope here: refund of a COMPLETED payment (US-27).
+  That uses a separate refund request and compensating
+  ledger entries; the payment stays Completed (A-12).
+end note
+@enduml
