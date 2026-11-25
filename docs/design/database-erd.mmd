@@ -22,6 +22,13 @@ erDiagram
     BILLERS ||--o{ SETTLEMENT_FILES : "sends daily"
     SETTLEMENT_FILES ||--o{ RECONCILIATION_ITEMS : "contains"
     PAYMENTS ||--o{ RECONCILIATION_ITEMS : "compared in"
+    WALLETS ||--o{ PAYMENTS : "funds"
+    WALLET_HOLDS ||--o{ LEDGER_ENTRIES : "hold movements"
+    USERS ||--o{ LEDGER_ENTRIES : "created by"
+    LEDGER_ENTRIES ||--o| AGENT_COMMISSIONS : "posted as"
+    USERS ||--o{ REFUND_REQUESTS : "requests"
+    USERS |o--o{ REFUND_REQUESTS : "decides"
+    USERS ||--o{ SYSTEM_SETTINGS : "updates"
 
     USERS {
         bigint id PK
@@ -29,7 +36,7 @@ erDiagram
         string phone UK
         string national_id UK
         string password_hash
-        string role "CUSTOMER, AGENT, ADMIN, SUPPORT"
+        string role "CUSTOMER, AGENT, ADMIN, SUPPORT, FINANCE"
         string verification_level "BASIC or VERIFIED"
         string status "ACTIVE or BLOCKED"
         timestamp blocked_until "velocity rule 10 min block"
@@ -218,6 +225,7 @@ erDiagram
         string file_name
         date settlement_date
         timestamp uploaded_at
+        boolean is_complete "A-24 incomplete file cannot prove non-receipt"
     }
 
     RECONCILIATION_ITEMS {

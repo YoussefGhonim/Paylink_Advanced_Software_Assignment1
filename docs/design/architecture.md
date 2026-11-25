@@ -39,7 +39,7 @@ Why a modular monolith: simpler to build, test and deploy in the project timefra
 - **Responsibility:** payment life cycle (state machine), idempotency, orchestration of the payment steps, payment history for support, completed-payment refund requests.
 - **Owns tables:** `payments`, `payment_events`, `refund_requests`.
 - **Public interface:** `createPayment(request, idempotencyKey)`, `getPayment(reference)`, `getPaymentHistory(reference)`, `handleBillerResult(paymentId, result)`, `requestRefund`.
-- **Orchestration order:** limits and fraud check, quote fee, hold funds, send to biller, apply result (capture or release), request notifications.
+- **Orchestration order:** quote fee and total, limits and fraud check, hold funds, send to biller, apply result (capture or release), request notifications.
 - **Key rules:** only the transitions allowed in the requirements (Initiated, FundsHeld, SentToBiller, Completed, Failed, Unknown, Rejected, Refunded); Unknown is never refunded automatically; the fee is locked at initiation.
 - **Depends on:** Fraud, Fees, Accounts & Wallet, Biller Catalog, Biller Integration, Notifications (interfaces only).
 
