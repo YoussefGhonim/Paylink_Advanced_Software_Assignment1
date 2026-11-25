@@ -1,0 +1,428 @@
+@startuml 02-domain-class
+title PayLink - Domain Class Diagram (Phase 1)
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+hide empty members
+
+' Every class maps to one table of database-erd.mmd (class name -> table name in the note at the bottom).
+
+' ---------- Enumerations ----------
+enum Role {
+  CUSTOMER
+  AGENT
+  ADMIN
+  SUPPORT
+  FINANCE
+}
+
+enum VerificationLevel {
+  BASIC
+  VERIFIED
+}
+
+enum AccountStatus {
+  ACTIVE
+  BLOCKED
+}
+
+enum PaymentStatus {
+  INITIATED
+  FUNDS_HELD
+  SENT_TO_BILLER
+  COMPLETED
+  REJECTED
+  UNKNOWN
+  FAILED
+  REFUNDED
+}
+
+enum LedgerEntryType {
+  TOPUP
+  HOLD
+  CAPTURE
+  RELEASE
+  REFUND
+  FEE_INCOME
+  COMMISSION
+  COMPENSATION
+}
+
+enum BalanceBucket {
+  AVAILABLE
+  HELD
+}
+
+enum HoldStatus {
+  ACTIVE
+  CAPTURED
+  RELEASED
+}
+
+enum FeeType {
+  FIXED
+  PERCENTAGE
+  TIERED
+}
+
+enum BillerProtocol {
+  REST_JSON
+  SOAP_XML
+  ASYNC_CALLBACK
+  BATCH_CSV
+}
+
+enum NormalizedResult {
+  SUCCESS
+  REFUSED
+  PENDING
+  TIMEOUT
+}
+
+enum NotificationChannel {
+  SMS
+  PUSH
+  EMAIL
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  UNDELIVERED
+}
+
+enum RefundRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ReconciliationResult {
+  MATCHED
+  MISMATCH
+  MISSING_IN_PAYLINK
+  MISSING_IN_SETTLEMENT
+}
+
+class Money <<value object>> {
+  amount : Decimal
+  currency : String
+  add(Money) : Money
+  subtract(Money) : Money
+}
+
+' ---------- Accounts and Wallet ----------
+class UserAccount {
+  id : Long
+  fullName : String
+  phone : String {unique}
+  nationalId : String {unique}
+  passwordHash : String
+  role : Role
+  verificationLevel : VerificationLevel
+  status : AccountStatus
+  blockedUntil : DateTime
+  createdAt : DateTime
+  isBlocked(now) : boolean
+  dailyLimit() : Money
+}
+
+class Wallet {
+  id : Long
+  currency : String
+  createdAt : DateTime
+  availableBalance() : Money
+  heldBalance() : Money
+}
+
+class LedgerEntry <<immutable>> {
+  id : Long
+  entryType : LedgerEntryType
+  bucket : BalanceBucket
+  amount : Money
+  reason : String
+  createdBy : Long
+  createdAt : DateTime
+}
+
+class WalletHold {
+  id : Long
+  amount : Money
+  status : HoldStatus
+  createdAt : DateTime
+  closedAt : DateTime
+}
+
+' ---------- Biller Catalog ----------
+class Biller {
+  id : Long
+  code : String {unique}
+  name : String
+  category : String
+  protocol : BillerProtocol
+  status : String
+}
+
+class BillerService {
+  id : Long
+  name : String
+  minAmount : Money
+  maxAmount : Money
+  status : String
+}
+
+class ServiceInputField {
+  id : Long
+  fieldName : String
+  label : String
+  required : boolean
+  validationRegex : String
+}
+
+' ---------- Fees and Commissions ----------
+class FeeRule {
+  id : Long
+  feeType : FeeType
+  fixedAmount : Money
+  percentage : Decimal
+  minFee : Money
+  tierThreshold : Money
+  feeBelowThreshold : Money
+  feeAboveThreshold : Money
+  active : boolean
+  calculate(Money) : Money
+}
+
+class Promotion {
+  id : Long
+  startDate : Date
+  endDate : Date
+  feeOverride : Money
+  active : boolean
+  isActiveOn(date) : boolean
+}
+
+class AgentCommission {
+  id : Long
+  feeAmount : Money
+  commissionAmount : Money
+  createdAt : DateTime
+}
+
+class SystemSetting {
+  settingKey : String
+  settingValue : String
+  description : String
+  updatedAt : DateTime
+}
+
+' ---------- Payment Processing ----------
+class Payment {
+  id : Long
+  reference : String {unique}
+  idempotencyKey : String
+  requestHash : String
+  inputData : Json
+  billAmount : Money
+  feeAmount : Money
+  totalAmount : Money
+  status : PaymentStatus
+  billerReference : String
+  failureReason : String
+  retryCount : int
+  nextRetryAt : DateTime
+  createdAt : DateTime
+  updatedAt : DateTime
+  transitionTo(PaymentStatus, event)
+}
+
+class PaymentEvent {
+  id : Long
+  fromState : PaymentStatus
+  toState : PaymentStatus
+  event : String
+  details : String
+  createdAt : DateTime
+}
+
+class RefundRequest {
+  id : Long
+  refundAmount : Money
+  status : RefundRequestStatus
+  reason : String
+  decidedAt : DateTime
+  createdAt : DateTime
+}
+
+' ---------- Biller Integration ----------
+interface BillerAdapter <<port>> {
+  inquire(service, inputs) : BillerResult
+  pay(request) : BillerResult
+  queryStatus(billerReference) : BillerResult
+  handleCallback(payload) : BillerResult
+}
+
+class BillerResult <<value object>> {
+  result : NormalizedResult
+  billerReference : String
+  amount : Money
+  reason : String
+}
+
+class ElectroCoAdapter
+class AquaCoAdapter
+class TopUpNetAdapter
+
+class BillerCallback {
+  id : Long
+  billerReference : String
+  result : String
+  rawPayload : Json
+  isDuplicate : boolean
+  receivedAt : DateTime
+}
+
+' ---------- Notifications ----------
+class Notification {
+  id : Long
+  channel : NotificationChannel
+  templateCode : String
+  message : String
+  status : NotificationStatus
+  attempts : int
+  lastError : String
+  createdAt : DateTime
+}
+
+' ---------- Reconciliation ----------
+class SettlementFile {
+  id : Long
+  fileName : String
+  settlementDate : Date
+  uploadedAt : DateTime
+  complete : boolean
+}
+
+class ReconciliationItem {
+  id : Long
+  billerReference : String
+  billerAmount : Money
+  billerStatus : String
+  result : ReconciliationResult
+  notes : String
+}
+
+' ---------- Audit ----------
+class AuditLog <<immutable>> {
+  id : Long
+  action : String
+  entityType : String
+  entityId : Long
+  reason : String
+  oldValue : Json
+  newValue : Json
+  createdAt : DateTime
+}
+
+' ---------- Relationships ----------
+UserAccount "1" -- "1" Wallet : owns >
+Wallet "1" *-- "0..*" LedgerEntry : records >
+Wallet "1" *-- "0..*" WalletHold : reserves >
+WalletHold "0..1" -- "0..*" LedgerEntry : movements >
+
+Biller "1" *-- "1..*" BillerService : offers >
+BillerService "1" *-- "0..*" ServiceInputField : requires >
+BillerService "1" -- "0..*" FeeRule : priced by >
+Biller "1" -- "0..*" Promotion : may have >
+
+UserAccount "1" -- "0..*" Payment : customer pays >
+UserAccount "0..1" -- "0..*" Payment : agent assists >
+Wallet "1" -- "0..*" Payment : funds >
+BillerService "1" -- "0..*" Payment : paid via >
+Payment "1" *-- "1..*" PaymentEvent : state history >
+Payment "1" -- "0..1" WalletHold : has one hold >
+Payment "1" -- "0..*" LedgerEntry : causes >
+Payment "1" -- "0..1" AgentCommission : earns >
+UserAccount "1" -- "0..*" AgentCommission : agent receives >
+AgentCommission "0..1" -- "1" LedgerEntry : posted as >
+Payment "1" -- "0..*" BillerCallback : receives >
+Payment "1" -- "0..*" Notification : triggers >
+UserAccount "1" -- "0..*" Notification : receives >
+Payment "1" -- "0..*" RefundRequest : may be disputed (Completed only) >
+UserAccount "1" -- "0..*" RefundRequest : requests / decides >
+
+Biller ..> BillerAdapter : resolved by factory
+BillerAdapter <|.. ElectroCoAdapter
+BillerAdapter <|.. AquaCoAdapter
+BillerAdapter <|.. TopUpNetAdapter
+BillerAdapter ..> BillerResult : returns
+
+Biller "1" -- "0..*" SettlementFile : sends daily >
+SettlementFile "1" *-- "0..*" ReconciliationItem : contains >
+Payment "0..1" -- "0..*" ReconciliationItem : compared in >
+
+UserAccount "1" -- "0..*" AuditLog : performs >
+UserAccount "1" -- "0..*" SystemSetting : updates >
+
+UserAccount --> Role
+UserAccount --> VerificationLevel
+UserAccount --> AccountStatus
+Payment --> PaymentStatus
+LedgerEntry --> LedgerEntryType
+LedgerEntry --> BalanceBucket
+WalletHold --> HoldStatus
+FeeRule --> FeeType
+Biller --> BillerProtocol
+Notification --> NotificationChannel
+Notification --> NotificationStatus
+RefundRequest --> RefundRequestStatus
+ReconciliationItem --> ReconciliationResult
+
+note top of UserAccount
+  One class for all roles (table users).
+  Customer and Agent are roles, not subclasses.
+  Velocity block (10 min) sets blockedUntil.
+end note
+
+note bottom of Wallet
+  Available and held balances are DERIVED from
+  LedgerEntry rows by bucket, never stored or
+  overwritten (US-05). Hold is atomic with a
+  wallet lock (A-07).
+end note
+
+note bottom of Payment
+  Fee is locked at initiation (A-16). A refund of a
+  Completed payment never changes this row: it creates a
+  RefundRequest plus compensating ledger entries (A-12).
+  Idempotency is a unique key per customer plus
+  requestHash to detect a changed payload (A-05).
+end note
+
+note bottom of SystemSetting
+  Keys: daily_limit_basic, daily_limit_verified, min_payment,
+  max_payment, velocity_max, velocity_window_seconds,
+  velocity_block_minutes, timeout_seconds, retry_offsets_minutes,
+  notification_max_retries, commission_rate (0.40).
+  Editable without redeploy (US-24, TR-06).
+end note
+
+note bottom of ReconciliationItem
+  A biller line for a payment PayLink marked Failed is
+  flagged MISMATCH for review, never silently rewritten
+  (US-26). Non-receipt is concluded only from a
+  complete settlement file (A-24).
+end note
+
+note as TableMap
+  Class to ERD table:
+  UserAccount = users, Wallet = wallets, LedgerEntry = ledger_entries,
+  WalletHold = wallet_holds, Biller = billers, BillerService = biller_services,
+  ServiceInputField = service_input_fields, FeeRule = fee_rules,
+  Promotion = promotions, AgentCommission = agent_commissions,
+  SystemSetting = system_settings, Payment = payments,
+  PaymentEvent = payment_events, RefundRequest = refund_requests,
+  BillerCallback = biller_callbacks, Notification = notifications,
+  SettlementFile = settlement_files, ReconciliationItem = reconciliation_items,
+  AuditLog = audit_logs
+end note
+@enduml

@@ -1,0 +1,57 @@
+@startuml 03-payment-state
+title PayLink - Payment State Diagram (Phase 1)
+skinparam shadowing false
+hide empty description
+
+[*] --> Initiated : payment created\n(fee locked, A-16)
+
+Initiated --> FundsHeld : fraud checks pass\nAND funds sufficient
+Initiated --> Rejected : fraud check fails\nOR insufficient funds
+
+FundsHeld --> SentToBiller : request sent to biller
+
+SentToBiller --> Completed : biller confirms
+SentToBiller --> Failed : biller refuses
+SentToBiller --> Unknown : no answer by timeout (10 s)
+
+Unknown --> Completed : late callback / retry /\nsettlement confirms
+Unknown --> Failed : later refusal OR reconciliation\nestablishes non-payment
+
+Failed --> Refunded : hold released
+
+Completed --> [*]
+Rejected --> [*]
+Refunded --> [*]
+
+note right of Initiated
+  No money moves in Initiated or Rejected.
+  Rejected: no biller call is ever made.
+end note
+
+note right of FundsHeld
+  Total (bill + fee) moves from available
+  to held BEFORE the biller call.
+end note
+
+note left of Unknown
+  Funds stay held. Never refunded automatically.
+  Re-query at 1, 5 and 15 min after the initial
+  timeout (not cumulative, A-21), then wait for
+  reconciliation (A-24).
+end note
+
+note bottom of Completed
+  FINAL. Capture of held funds, fee income and
+  agent commission are posted here. A later refund
+  uses a separate refund request and compensating
+  ledger entries; this state does not change (A-12).
+end note
+
+note bottom of Refunded
+  FINAL. Only reachable from Failed.
+end note
+
+note bottom of Rejected
+  FINAL. Reached only from Initiated.
+end note
+@enduml
